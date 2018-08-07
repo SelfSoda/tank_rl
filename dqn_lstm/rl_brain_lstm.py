@@ -24,6 +24,7 @@ class DeepQNetworkLSTM:
             tank_max_count,
             bullet_max_count,
             hidden_size,
+            batch_size,
 
             learning_rate=ALPHA,
             reward_decay=GAMMA,
@@ -31,7 +32,6 @@ class DeepQNetworkLSTM:
             replace_target_iter=10,
             saver_iter=100,
             memory_size=200,
-            batch_size=32,
             e_greedy_increment=None,
             output_graph=False
     ):
@@ -58,12 +58,12 @@ class DeepQNetworkLSTM:
 
         # self.memory = np.zeros((self.memory_size, n_features*2+2))
 
-        self.memory_tank = np.zeros((self.memory_size, self.tank_input*self.time_steps))
-        self.memory_bullet = np.zeros((self.memory_size, self.bullet_input*self.time_steps))
+        self.memory_tank = np.zeros((self.memory_size, self.tank_input*self.time_steps_tank))
+        self.memory_bullet = np.zeros((self.memory_size, self.bullet_input*self.time_steps_bullet))
         self.memory_action = np.zeros((self.memory_size, 1))
         self.memory_reward = np.zeros((self.memory_size, 1))
-        self.memory_tank_ = np.zeros((self.memory_size, self.tank_input*self.time_steps))
-        self.memory_bullet_ = np.zeros((self.memory_size, self.bullet_input*self.time_steps))
+        self.memory_tank_ = np.zeros((self.memory_size, self.tank_input*self.time_steps_tank))
+        self.memory_bullet_ = np.zeros((self.memory_size, self.bullet_input*self.time_steps_bullet))
 
         self._build_net()
 
@@ -98,6 +98,7 @@ class DeepQNetworkLSTM:
             # --------------------input layer--------------------
             with tf.variable_scope("tank_l1"):
                 tank_input = tf.reshape(self.s_tank, [-1, self.tank_input])
+                print("tank_input.shape is {}".format(tank_input.shape))
                 tank_w_in = tf.get_variable('tank_w_in', [self.tank_input, self.hidden_size],
                                             initializer=w_initializer, collections=c_names)
                 tank_b_in = tf.get_variable('tank_b_in', [1, self.hidden_size],
@@ -107,6 +108,7 @@ class DeepQNetworkLSTM:
 
             with tf.variable_scope("bullet_l1"):
                 bullet_input = tf.reshape(self.s_bullet, [-1, self.bullet_input])
+                print("bullet_input.shape is {}".format(bullet_input.shape))
                 bullet_w_in = tf.get_variable('bullet_w_in', [self.bullet_input, self.hidden_size],
                                               initializer=w_initializer, collections=c_names)
                 bullet_b_in = tf.get_variable('bullet_b_in', [1, self.hidden_size],
@@ -121,15 +123,18 @@ class DeepQNetworkLSTM:
                 tank_lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(self.hidden_size)
                 tank_init_state = tank_lstm_cell.zero_state(self.batch_size, dtype=tf.float32)
                 tank_output, _ = tf.nn.dynamic_rnn(tank_lstm_cell, tank_in, initial_state=tank_init_state)
+                print("tank_output.shape is {}".format(tank_output.shape))
                 tank_output = tf.reshape(tank_output, [-1, self.hidden_size])
                 print("tank_output.shape is {}".format(tank_output.shape))
 
             with tf.variable_scope("bullet_lstm"):
+                print("bullet_in.shape is {}".format(bullet_in.shape))
                 bullet_lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(self.hidden_size)
                 bullet_init_state = bullet_lstm_cell.zero_state(self.batch_size, dtype=tf.float32)
                 bullet_output, _ = tf.nn.dynamic_rnn(bullet_lstm_cell, bullet_in, initial_state=bullet_init_state)
+                print("bullet_output.shape is {}".format(bullet_output.shape))
                 bullet_output = tf.reshape(bullet_output, [-1, self.hidden_size])
-                print("bullet_output.shape is {}".format(bullet_output))
+                print("bullet_output.shape is {}".format(bullet_output.shape))
 
             # -------------------output layer--------------------
 
@@ -175,7 +180,7 @@ class DeepQNetworkLSTM:
                 tank_b_in = tf.get_variable('tank_b_in', [1, self.hidden_size],
                                             initializer=b_initializer, collections=c_names)
                 tank_in = tf.matmul(tank_input, tank_w_in) + tank_b_in
-                tank_in = tf.reshape(tank_in, [-1, self.time_steps, self.hidden_size])
+                tank_in = tf.reshape(tank_in, [-1, self.time_steps_tank, self.hidden_size])
 
             with tf.variable_scope("bullet_l1"):
                 bullet_input = tf.reshape(self.s_bullet_, [-1, self.bullet_input])
@@ -184,7 +189,7 @@ class DeepQNetworkLSTM:
                 bullet_b_in = tf.get_variable('bullet_b_in', [1, self.hidden_size],
                                               initializer=b_initializer, collections=c_names)
                 bullet_in = tf.matmul(bullet_input, bullet_w_in) + bullet_b_in
-                bullet_in = tf.reshape(bullet_in, [-1, self.time_steps, self.hidden_size])
+                bullet_in = tf.reshape(bullet_in, [-1, self.time_steps_bullet, self.hidden_size])
 
             # ---------------------lstm layer--------------------
 
@@ -230,8 +235,11 @@ class DeepQNetworkLSTM:
         bullet_observation.shape is [MAX_BULLET, BULLET_FEATURES]
     """
     def choose_action(self, tank_observation, bullet_observation):
-        tank_observation = tank_observation[np.newaxis, :]
-        bullet_observation = bullet_observation[np.newaxis, :]
+        # tank_observation = tank_observation[np.newaxis, :]
+        # bullet_observation = bullet_observation[np.newaxis, :]
+
+        print("tank_observation.shape is {}".format(tank_observation.shape))
+        print("bullet_observation.shape is {}".format(bullet_observation.shape))
 
         if np.random.uniform() < self.epsilon:
             actions_value = self.sess.run(self.q_eval,
@@ -319,6 +327,7 @@ if __name__=='__main__':
         tank_max_count=10,
         bullet_max_count=20,
         hidden_size=64,
+        batch_size=32,
 
         output_graph=True
     )

@@ -60,13 +60,15 @@ class RLTank(WebSocketClient):
         result = json.loads(m.data)
         data = json.loads(result['data'])
         observation_received = self.get_observation(data)
+        print("observation_received['tank'].shape is {}".format(observation_received['tank'].shape))
+        print("observation_received['bullet'].shape is {}".format(observation_received['bullet'].shape))
 
         # ---------------get reward------------------
 
         reward = self.get_reward(data)
         # ------------choose next action-------------
 
-        action = self.policy(observation_result)
+        action = self.policy(observation_received)
 
         self.send_cmd(action)
 
@@ -79,7 +81,9 @@ class RLTank(WebSocketClient):
         # -----------------RL store------------------
 
         if last_action:
-            dqn.store_transition(observation, last_action, reward, observation_result)
+            dqn.store_transition(observation["tank"], observation["bullet"],
+                                 last_action, reward,
+                                 observation_received["tank"], observation_received["bullet"])
 
         # -----------------RL learn------------------
 
@@ -88,23 +92,23 @@ class RLTank(WebSocketClient):
             time_st = time.time()
             dqn.learn()
             time_end = time.time()
-            print("cost {}".format(time_end-time_st))
+            print("cost {}s".format(time_end-time_st))
 
         # -----------update last data----------------
 
         last_action = action
         last_data = data
-        last_observation = observation_result
+        last_observation = observation_received
 
         step += 1
 
     """
-        8个action，
+        4个action，
         分别是不开火且转向到0， 90， 180， 270，
-        以及先转向到0， 90， 180， 270，然后再开火
+        以及随机攻击一个敌人
     """
     def policy(self, observation):
-        action = dqn.choose_action(observation)
+        action = dqn.choose_action(observation["tank"], observation["bullet"])
         return action
 
     def get_observation(self, data):
@@ -119,41 +123,60 @@ class RLTank(WebSocketClient):
 
         my_tank = tanks[self.my_tank_name]
 
-        self.me = (my_tank['position'][0], my_tank['position'][1], my_tank['direction'],
+        self.me = [my_tank['position'][0], my_tank['position'][1], my_tank['direction'],
                    my_tank['score'], my_tank['fireCd'], my_tank['shieldCd'],
-                   my_tank['rebornCd'] if my_tank['rebornCd'] else 0)
+                   my_tank['rebornCd'] if my_tank['rebornCd'] else 0]
 
         # ------------------------enemy--------------------------------
         self.enemy_list = []
         for (tank_name, value) in tanks.items():
             if tank_name == self.my_tank_name:
                 continue
-            # !!! tank feature !!!
-            enemy = (value['position'][0], value['position'][1], value['direction'],
-                     value['score'], value['fireCd'], value['shieldCd'], value['rebornCd'] if value['rebornCd'] else 0)
+            # -----------tank feature------------
+            enemy = [value['position'][0], value['position'][1], value['direction'],
+                     value['score'], value['fireCd'], value['shieldCd'], value['rebornCd'] if value['rebornCd'] else 0]
             self.enemy_list.append(enemy)
 
         # sorted by score from minimum to maximum
-        self.enemy_list = sorted(self.enemy_list, cmp=lambda x:x[3], reverse=False)
+        self.enemy_list = sorted(self.enemy_list, key=lambda x:x[3], reverse=False)
 
-        # for enemy in self.enemy_list[:max_enemy]:
-        #     observation += [e for e in enemy[:3]]
+        # while len(self.enemy_list) < MAX_TANK:
+        #     self.enemy_list.append([0]*TANK_FEATURES)
 
-        while len(observation) < 3 + max_enemy*3:
-            observation.append(0)
+        for enemy in self.enemy_list[:MAX_TANK]:
+            tank_observation += [e for e in enemy[:TANK_FEATURES]]
+
+        tank_observation = np.pad(tank_observation,
+                                  (0, MAX_TANK*TANK_FEATURES-len(tank_observation)), 'constant')
+
+        print("The length of tank_observation is {}".format(len(tank_observation)))
 
         # ------------------------bullet-------------------------------
         self.bullet_list = []
         for bullet in bullets:
-            self.bullet_list.append((bullet['position'][0], bullet['position'][1], bullet['direction']))
+            # ------------bullet feature-------------
+            distance = util.get_distance(self.me, [bullet['position'][0], bullet['position'][1]])
+            self.bullet_list.append([
+                bullet['position'][0], bullet['position'][1], bullet['direction'], distance])
 
-        for bullet in self.bullet_list[:max_bullet]:
-            observation += [b for b in bullet]
+        # sorted by distance from maximum to minimum
+        self.bullet_list = sorted(self.bullet_list, key=lambda x:x[3], reverse=True)
 
-        while len(observation)<n_features:
-            observation.append(0)
+        # while len(self.bullet_list) < MAX_BULLET:
+        #     self.bullet_list.append([0]*BULLET_FEATURES)
 
-        return np.array(observation)
+        for bullet in self.bullet_list[:MAX_BULLET]:
+            bullet_observation += [b for b in bullet[:BULLET_FEATURES]]
+
+        bullet_observation = np.pad(bullet_observation,
+                                    (0, MAX_BULLET*BULLET_FEATURES-len(bullet_observation)), 'constant')
+
+        print("The length of bullet_observation is {}".format(len(bullet_observation)))
+
+        return {
+            "tank": np.reshape(np.array(tank_observation), (-1, TANK_FEATURES)),
+            "bullet": np.reshape(np.array(bullet_observation), (-1, BULLET_FEATURES))
+        }
 
     def get_reward(self, data):
         global name
@@ -174,6 +197,8 @@ class RLTank(WebSocketClient):
             pass
         elif reward < 0:
             reward = -10
+        elif reward > 0:
+            reward = 50
 
         print("reward is {}.".format(reward))
         return reward
@@ -195,8 +220,8 @@ if __name__ == "__main__":
     # name = 'dtt'
     # name = 'ljz'
 
-    MAX_TANK = 10
-    MAX_BULLET = 10
+    MAX_TANK = 4
+    MAX_BULLET = 4
     TANK_FEATURES = 7
     BULLET_FEATURES = 4
 
@@ -208,7 +233,8 @@ if __name__ == "__main__":
         bullet_input=BULLET_FEATURES,       # 子弹的feature数
         tank_max_count=MAX_TANK,            # 同一时间，场上存在的最大坦克数
         bullet_max_count=MAX_BULLET,        # 同一时间，场上存在的最大子弹数
-        hidden_size=64,     # LSTM隐状态
+        hidden_size=64,                     # LSTM隐状态
+        batch_size=32                       # Batch
     )
     try:
         ws = RLTank(config.URL)
